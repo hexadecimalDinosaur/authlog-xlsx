@@ -76,7 +76,7 @@ for line in logFile.readlines():
     event = match.group(4)
     eventsSheet.write(lineNum, 3, event)
 
-    if options.ssh and process.startswith('sshd') and any(map(event.startswith, ("Connection", "Accepted", "Disconnected", "refused connect", "pam_unix(sshd:session): session closed", "Invalid user"))):
+    if options.ssh and process.startswith('sshd') and any(map(event.startswith, ("Connection", "Accepted", "Disconnected", "refused connect", "pam_unix(sshd:session): session closed", "Invalid user", "Failed "))):
         if process not in sshd_processes:
             sshd_processes[process] = {
                     'connect': None,
@@ -100,21 +100,27 @@ for line in logFile.readlines():
                 sshd_processes[process]['connect'] = date
                 sshd_processes[process]['ip'] = connectionEvent.group(1)
                 sshd_processes[process]['port'] = connectionEvent.group(2)
-        elif event.startswith("Accepted"):
-            acceptEvent = re.search(
-                    r"Accepted (password|publickey|none) for (\S*) from ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*%{0,1}\S*) port ([0-9]{1,5}) (ssh[0-9]):{0,1}\s{0,1}(.*)",
+        elif event.startswith("Accepted") or event.startswith("Failed"):
+            authEvent = re.search(
+                    r"(Accepted|Failed) (password|publickey|none) for (\S*) from ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*%{0,1}\S*) port ([0-9]{1,5}) (ssh[0-9]):{0,1}\s{0,1}(.*)",
                     event
                     )
-            if acceptEvent is not None:
+            if authEvent is None:
+                authEvent = re.search(
+                        r"(Accepted|Failed) (password|publickey|none) for invalid user (\S*) from ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*%{0,1}\S*) port ([0-9]{1,5}) (ssh[0-9]):{0,1}\s{0,1}(.*)",
+                        event
+                        )
+            if authEvent is not None:
                 if sshd_processes[process]['connect'] is None:
                     sshd_processes[process]['connect'] = date
-                sshd_processes[process]['ip'] = acceptEvent.group(3)
-                sshd_processes[process]['port'] = acceptEvent.group(4)
-                sshd_processes[process]['state'] = "Accepted"
-                sshd_processes[process]['auth'] = acceptEvent.group(1)
-                sshd_processes[process]['user'] = acceptEvent.group(2)
-                if acceptEvent.group(1) == 'publickey':
-                    sshd_processes[process]['key'] = acceptEvent.group(6)
+                sshd_processes[process]['ip'] = authEvent.group(4)
+                sshd_processes[process]['port'] = authEvent.group(5)
+                if sshd_processes[process]['state'] is None:
+                    sshd_processes[process]['state'] = authEvent.group(1)
+                sshd_processes[process]['auth'] = authEvent.group(2)
+                sshd_processes[process]['user'] = authEvent.group(3)
+                if authEvent.group(2) == 'publickey':
+                    sshd_processes[process]['key'] = authEvent.group(7)
         elif event.startswith("Disconnected"):
             disconnectEvent = re.search(
                     r"Disconnected from (invalid ){0,1}user (\S*) ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*%{0,1}\S*) port ([0-9]{1,5})",
@@ -135,9 +141,9 @@ for line in logFile.readlines():
             if invalidEvent:
                 if sshd_processes[process]['connect'] is None:
                     sshd_processes[process]['connect'] = date
-                sshd_processes[process]['ip'] = acceptEvent.group(2)
-                sshd_processes[process]['port'] = acceptEvent.group(3)
-                sshd_processes[process]['user'] = acceptEvent.group(1)
+                sshd_processes[process]['ip'] = invalidEvent.group(2)
+                sshd_processes[process]['port'] = invalidEvent.group(3)
+                sshd_processes[process]['user'] = invalidEvent.group(1)
                 sshd_processes[process]['state'] = "Invalid user"
         elif event.startswith("Connection closed"):
             closeEvent = re.search(
