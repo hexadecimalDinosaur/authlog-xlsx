@@ -275,32 +275,33 @@ for line in track(logFile, description="Processing Events", total=lineCount):
 
     lineNum += 1
 
-ipRow = 1
-for ip in track(sshd_ips.keys(), description="Looking Up IPs", total=len(sshd_ips)):
-    try:
-        lookup = ipwhois.IPWhois(ip)
-        data = lookup.lookup_rdap()
-        sshd_ips[ip]['country'] = data['asn_country_code']
-        if data['asn'] is not None and data['asn_description'] is not None:
-            sshd_ips[ip]['asn'] = data['asn'] + ': ' + data['asn_description']
-        sshd_ips[ip]['provider'] = data['network']['name']
-    except ipwhois.IPDefinedError:
-        pass
-    except ipwhois.HTTPLookupError:
-        pass
-    except KeyboardInterrupt:
-        sys.exit(130)
+if options.ssh:
+    ipRow = 1
+    for ip in track(sshd_ips.keys(), description="Looking Up IPs", total=len(sshd_ips)):
+        try:
+            lookup = ipwhois.IPWhois(ip)
+            data = lookup.lookup_rdap()
+            sshd_ips[ip]['country'] = data['asn_country_code']
+            if data['asn'] is not None and data['asn_description'] is not None:
+                sshd_ips[ip]['asn'] = data['asn'] + ': ' + data['asn_description']
+            sshd_ips[ip]['provider'] = data['network']['name']
+        except ipwhois.IPDefinedError:
+            pass
+        except ipwhois.HTTPLookupError:
+            pass
+        except KeyboardInterrupt:
+            sys.exit(130)
 
-    sshIPsSheet.write(ipRow, 0, ip)
-    sshIPsSheet.write(ipRow, 1, sshd_ips[ip]['country'])
-    sshIPsSheet.write(ipRow, 2, sshd_ips[ip]['asn'])
-    sshIPsSheet.write(ipRow, 3, sshd_ips[ip]['provider'])
-    sshIPsSheet.write(ipRow, 4, sshd_ips[ip]['total'])
-    sshIPsSheet.write(ipRow, 5, sshd_ips[ip]['accepted'])
-    sshIPsSheet.write(ipRow, 6, sshd_ips[ip]['refused'])
-    sshIPsSheet.write(ipRow, 7, sshd_ips[ip]['invalid'])
-    sshIPsSheet.write(ipRow, 8, sshd_ips[ip]['failed'])
+        sshIPsSheet.write(ipRow, 0, ip)
+        sshIPsSheet.write(ipRow, 1, sshd_ips[ip]['country'])
+        sshIPsSheet.write(ipRow, 2, sshd_ips[ip]['asn'])
+        sshIPsSheet.write(ipRow, 3, sshd_ips[ip]['provider'])
+        sshIPsSheet.write(ipRow, 4, sshd_ips[ip]['total'])
+        sshIPsSheet.write(ipRow, 5, sshd_ips[ip]['accepted'])
+        sshIPsSheet.write(ipRow, 6, sshd_ips[ip]['refused'])
+        sshIPsSheet.write(ipRow, 7, sshd_ips[ip]['invalid'])
+        sshIPsSheet.write(ipRow, 8, sshd_ips[ip]['failed'])
 
-    ipRow += 1
+        ipRow += 1
 
 workbook.close()
