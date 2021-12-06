@@ -18,6 +18,10 @@ optional_args = args.add_argument_group()
 opt_ssh = optional_args.add_argument(
         '-s', '--ssh', dest='ssh',
         action='store_true', help='parse sshd events to create ssh worksheet')
+opt_ip = optional_args.add_argument(
+        '-i', '--ip', dest='ip',
+        action='store_true',
+        help='perform whois lookup on all IPs that connected to ssh')
 options = args.parse_args()
 
 workbook = xlsxwriter.Workbook(os.path.expanduser(options.sheet))
@@ -60,6 +64,7 @@ if options.ssh:
     sshEventsSheet.write(0, 8, 'Authentication Key', bold)
     sshEventsSheet.set_column(8, 8, 100)
 
+if options.ip:
     sshIPsSheet = workbook.add_worksheet("SSH IPs")
     sshIPsSheet.freeze_panes(1, 0)
 
@@ -275,7 +280,7 @@ for line in track(logFile, description="Processing Events", total=lineCount):
 
     lineNum += 1
 
-if options.ssh:
+if options.ip:
     ipRow = 1
     for ip in track(sshd_ips.keys(), description="Looking Up IPs", total=len(sshd_ips)):
         try:
