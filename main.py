@@ -2,8 +2,11 @@
 
 import argparse
 import os
+import sys
 import re
 import xlsxwriter
+import ipwhois
+from rich.progress import track
 
 args = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -57,12 +60,55 @@ if options.ssh:
     sshEventsSheet.write(0, 8, 'Authentication Key', bold)
     sshEventsSheet.set_column(8, 8, 100)
 
+    sshIPsSheet = workbook.add_worksheet("SSH IPs")
+    sshIPsSheet.freeze_panes(1, 0)
+
+    sshIPsSheet.write(0, 0, 'IP Address', bold)
+    sshIPsSheet.set_column(0, 0, 20)
+    sshIPsSheet.write(0, 1, 'IP Country', bold)
+    sshIPsSheet.set_column(1, 1, 10)
+    sshIPsSheet.write(0, 2, 'IP ASN', bold)
+    sshIPsSheet.set_column(2, 2, 20)
+    sshIPsSheet.write(0, 3, 'IP Provider', bold)
+    sshIPsSheet.set_column(3, 3, 20)
+    sshIPsSheet.write(0, 4, 'Total', bold)
+    sshIPsSheet.set_column(4, 4, 7)
+    sshIPsSheet.write(0, 5, 'Accepted', bold)
+    sshIPsSheet.set_column(5, 5, 7)
+    sshIPsSheet.write(0, 6, 'Refused', bold)
+    sshIPsSheet.set_column(6, 6, 7)
+    sshIPsSheet.write(0, 7, "Invalid User", bold)
+    sshIPsSheet.set_column(7, 7, 10)
+    sshIPsSheet.write(0, 8, 'Failed Auth', bold)
+    sshIPsSheet.set_column(8, 8, 10)
+
+
 logFile = options.logFile
 lineNum = 1
 sshLineNum = 1
 sshd_processes = {}
+sshd_ips = {}
 
-for line in logFile.readlines():
+def ipData(ip: str) -> dict:
+    return {
+            "ip": ip,
+            "country": None,
+            "asn": None,
+            'provider': None,
+            'total': 0,
+            'accepted': 0,
+            'refused': 0,
+            'invalid': 0,
+            'failed': 0
+            }
+
+
+lineCount = 0
+for _ in logFile:
+    lineCount += 1
+logFile.seek(0)
+
+for line in track(logFile, description="Processing Events", total=lineCount):
     match = re.search(r"([A-Za-z]{3}\s+[0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2}) (\S*\S) (\S*\[[0-9]*\]): (.*)", line)
     if match is None:
         continue
@@ -111,6 +157,15 @@ for line in logFile.readlines():
                         event
                         )
             if authEvent is not None:
+                if authEvent.group(4) not in sshd_ips:
+                    sshd_ips[authEvent.group(4)] = ipData(authEvent.group(4))
+                if authEvent.group(1) == "Accepted":
+                    sshd_ips[authEvent.group(4)]["accepted"] += 1
+                    sshd_ips[authEvent.group(4)]["total"] += 1
+                else:
+                    sshd_ips[authEvent.group(4)]["failed"] += 1
+                    sshd_ips[authEvent.group(4)]["total"] += 1
+
                 if sshd_processes[process]['connect'] is None:
                     sshd_processes[process]['connect'] = date
                 sshd_processes[process]['ip'] = authEvent.group(4)
@@ -139,6 +194,11 @@ for line in logFile.readlines():
                     event
                     )
             if invalidEvent:
+                if invalidEvent.group(2) not in sshd_ips:
+                    sshd_ips[invalidEvent.group(2)] = ipData(invalidEvent.group(2))
+                sshd_ips[invalidEvent.group(2)]['total'] += 1
+                sshd_ips[invalidEvent.group(2)]['invalid'] += 1
+
                 if sshd_processes[process]['connect'] is None:
                     sshd_processes[process]['connect'] = date
                 sshd_processes[process]['ip'] = invalidEvent.group(2)
@@ -155,6 +215,18 @@ for line in logFile.readlines():
                 sshd_processes[process]['user'] = closeEvent.group(2)
                 sshd_processes[process]['ip'] = closeEvent.group(3)
                 sshd_processes[process]['port'] = closeEvent.group(4)
+        elif event.startswith("refused connect"):
+            refuseEvent = re.search(r"refused connect from ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*:*[0-9a-f]*%{0,1}\S*)", event)
+            if refuseEvent:
+                if refuseEvent.group(1) not in sshd_ips:
+                    sshd_ips[refuseEvent.group(1)] = ipData(refuseEvent.group(1))
+                sshd_ips[refuseEvent.group(1)]['refused'] += 1
+                sshd_ips[refuseEvent.group(1)]['total'] += 1
+
+                sshd_processes[process]['connect'] = date
+                sshd_processes[process]['disconnect'] = date
+                sshd_processes[process]['state'] = 'refused connect'
+                sshd_processes[process]['ip'] = refuseEvent.group(1)
 
         if sshd_processes[process]['connect']:
             sshEventsSheet.write(
@@ -198,9 +270,37 @@ for line in logFile.readlines():
                     )
         sshEventsSheet.write(sshd_processes[process]['row'], 2, process)
 
-        if event.startswith("pam_unix(sshd:session): session closed") or event.startswith("refused connect") or event.startswith("Connection closed"):
+        if event.startswith("pam_unix(sshd:session): session closed") or event.startswith("refused connect") or event.startswith("Connection closed") or event.startswith("Disconnect"):
             del sshd_processes[process]
 
     lineNum += 1
+
+ipRow = 1
+for ip in track(sshd_ips.keys(), description="Looking Up IPs", total=len(sshd_ips)):
+    try:
+        lookup = ipwhois.IPWhois(ip)
+        data = lookup.lookup_rdap()
+        sshd_ips[ip]['country'] = data['asn_country_code']
+        if data['asn'] is not None and data['asn_description'] is not None:
+            sshd_ips[ip]['asn'] = data['asn'] + ': ' + data['asn_description']
+        sshd_ips[ip]['provider'] = data['network']['name']
+    except ipwhois.IPDefinedError:
+        pass
+    except ipwhois.HTTPLookupError:
+        pass
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+    sshIPsSheet.write(ipRow, 0, ip)
+    sshIPsSheet.write(ipRow, 1, sshd_ips[ip]['country'])
+    sshIPsSheet.write(ipRow, 2, sshd_ips[ip]['asn'])
+    sshIPsSheet.write(ipRow, 3, sshd_ips[ip]['provider'])
+    sshIPsSheet.write(ipRow, 4, sshd_ips[ip]['total'])
+    sshIPsSheet.write(ipRow, 5, sshd_ips[ip]['accepted'])
+    sshIPsSheet.write(ipRow, 6, sshd_ips[ip]['refused'])
+    sshIPsSheet.write(ipRow, 7, sshd_ips[ip]['invalid'])
+    sshIPsSheet.write(ipRow, 8, sshd_ips[ip]['failed'])
+
+    ipRow += 1
 
 workbook.close()
